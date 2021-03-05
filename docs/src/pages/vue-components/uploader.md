@@ -382,3 +382,84 @@ export default {
   }
 }
 ```
+
+# Firebase 
+
+Firebase supports a 10 MB file size limit through http requests. [More info](https://firebase.google.com/docs/functions/quotas).
+The code below is good when you need a simple URL for Q-Uploader.
+
+::: tip TIPS
+
+Simply select Blaze plan, and enable Functions and Storage on Firebase.
+Make the proper configurations with `firebase init` in your terminal.
+In your functions folder, place the following code into the index.js file.
+Don't forget to run `npm i express cors busboy uuid` if you're using emulators.
+To deploy you can use `firebase deploy --only functions`
+Your Q-Uploader URL link will be ready in about 5 minutes. Check what it is from your Firebase/Functions panel.:::
+
+
+```
+const functions = require("firebase-functions");
+const admin = require("firebase-admin");
+
+const express = require("express");
+const cors = require("cors");
+const Busboy = require("busboy");
+const path = require("path");
+const os = require("os");
+const fs = require("fs");
+const { v4: uuidv4 } = require("uuid");
+
+admin.initializeApp();
+const bucket = admin.storage().bucket();
+
+const app = express();
+// Max http request limit is 10Mb for Firebase
+app.use(express.json({ limit: "10mb", extended: true }));
+app.use(express.urlencoded({ limit: "10mb", extended: true }));
+
+app.use(cors());
+
+app.post("/", async (req, res, next) => {
+  console.log("req:", req.body);
+  const busboy = new Busboy({
+    headers: req.headers,
+    limits: { fileSize: 10240000 },
+  });
+  let uploadData = null;
+  busboy.on("file", (fieldname, file, filename, encoding, mimetype) => {
+    const filepath = path.join(os.tmpdir(), filename);
+    uploadData = { file: filepath, filename: filename, type: mimetype };
+    file.pipe(fs.createWriteStream(filepath));
+  });
+
+  busboy.on("finish", () => {
+    let destinationFolder = "abcd";
+    return bucket
+      .upload(uploadData.file, {
+        destination: `${destinationFolder}/${uploadData.filename}`,
+
+        metadata: {
+          metadata: {
+            firebaseStorageDownloadTokens: uuidv4(),
+            contentType: uploadData.type,
+          },
+        },
+      })
+      .then(() => {
+        return res.status(200).json({
+          message: "it worked!",
+        });
+      })
+      .catch((err) => {
+        res.status(500).json({
+          error: err,
+        });
+      });
+  });
+  busboy.end(req.rawBody);
+});
+
+exports.app = functions.https.onRequest(app);
+
+```
